@@ -8,6 +8,10 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "playwright (>=1.56.0,<2.0.0)",
+    "aiofiles (>=25.1.0,<26.0.0)",
+    "typing-extensions (>=4.15.0,<5.0.0)",
+    "colorlog (>=6.10.1,<7.0.0)"
 ]
 
 [tool.poetry]
