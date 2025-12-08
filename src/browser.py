@@ -19,7 +19,7 @@ class BrowserManager:
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
-        
+
     async def initialize(self) -> BrowserContext:
         """Initialize browser with persistent context and stealth settings."""
         logger.info("Initializing browser with persistent context...")
@@ -31,14 +31,14 @@ class BrowserManager:
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-dev-shm-usage",
-            "--disable-web-security",
+            # "--disable-web-security",
             "--disable-features=IsolateOrigins,site-per-process",
             "--disable-setuid-sandbox",
             "--disable-infobars",
             "--window-position=0,0",
             "--ignore-certificate-errors",
             "--ignore-certificate-errors-spki-list",
-            "--start-maximized",  # Start maximized so you can see everything
+            "--start-maximized",
         ]
         
         # Use persistent context to leverage existing login session
