@@ -111,7 +111,38 @@ class GoogleAIStudioScraper:
                 # Continue anyway - may already be selected
         
         await self.interaction.random_action_delay()
-    
+
+    async def temporary_mode(self) -> None:
+        """
+        Ensure the chat is in temporary mode (incognito).
+        Checks if the toggle button is active; if not, clicks it.
+        """
+        logger.debug(f"Worker {self.worker_id}: Checking temporary mode status")
+        
+        try:
+            # Locator for the temporary chat toggle button using the aria-label
+            # which is stable across both states.
+            toggle_button = self.page.locator("button[aria-label='Temporary chat toggle']")
+            
+            # Wait for button to be visible to ensure we can read attributes
+            await toggle_button.wait_for(state="visible", timeout=5000)
+            
+            # Get the class attribute
+            # Enabled: "... ms-button-active"
+            # Disabled: "..." (missing ms-button-active)
+            class_attr = await toggle_button.get_attribute("class")
+            
+            if class_attr and "ms-button-active" in class_attr:
+                logger.debug(f"Worker {self.worker_id}: Temporary mode is already active")
+            else:
+                logger.info(f"Worker {self.worker_id}: Enabling temporary mode")
+                await self.interaction.safe_click(self.page, toggle_button)
+                await self.interaction.random_action_delay()
+                
+        except Exception as e:
+            # Log specific warning but don't crash the workflow
+            logger.warning(f"Worker {self.worker_id}: Failed to toggle temporary mode: {e}")
+
     async def input_prompt(self, prompt: str) -> None:
         """
         Type the prompt into the content-editable input area.
@@ -257,6 +288,9 @@ class GoogleAIStudioScraper:
             
             # Step 1: Reset to fresh chat
             await self.reset_chat_context()
+            
+            # Step 2.5: Ensure chat is in temporary mode
+            await self.temporary_mode()
             
             # Step 2: Select model
             await self.select_model()
