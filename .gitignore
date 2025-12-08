@@ -220,37 +220,43 @@ wheels/
 venv/
 env/
 ENV/
-.venv
+env.bak/
+venv.bak/
 
-# IDE
+# Playwright
+.pytest_cache/
+playwright-state/
+
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Project specific
+# Logs
+*.log
+logs/
 scraper.log
-scraper_metrics.json
+
+# Output Files
 final_result.json
-*.backup.json
-
-# Keep template but ignore actual prompts
-# Remove this line if you want to track your prompts
-# _0prompts.json
-
-# Playwright
-.playwright/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+results/
+*.json
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
+
+# Sensitive Data
+config.local.py
+.env
+secrets/
+
+# Temporary Files
+*.tmp
+temp/
+.cache/
 
 # Custom ignores
 **/AUTALIC.csv

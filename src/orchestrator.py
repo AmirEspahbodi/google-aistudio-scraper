@@ -1,161 +1,192 @@
 """
-Orchestrator
-Implements the Producer-Consumer pattern for concurrent scraping.
+Application Layer - Producer-Consumer Orchestration
 """
 import asyncio
-import json
-import time
+import logging
 from typing import List
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
-from pathlib import Path
+from asyncio import Queue
+from src.config import AppConfig
+from src.models import PromptTask, ScraperResult, PromptStatus, WorkerStats
+from src.browser import BrowserManager
+from src.scraper import GoogleAIStudioScraper
 
-from src.config import config
-from src.models import PromptTask, ScraperResult, ScraperMetrics
-from src.stealth_manager import StealthManager
-from src.human_interaction import HumanInteractionService
-from src.scraper_service import AIStudioScraperService
+logger = logging.getLogger(__name__)
 
 
 class ScraperOrchestrator:
-    """
-    Orchestrates the entire scraping operation.
-    Implements Producer-Consumer pattern with asyncio.Queue.
-    """
+    """Orchestrates multi-worker scraping using producer-consumer pattern."""
     
-    def __init__(self, prompts: List[PromptTask]):
-        self.prompts = prompts
-        self.queue: asyncio.Queue = asyncio.Queue()
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.browser_manager = BrowserManager(config.browser)
+        self.task_queue: Queue[PromptTask] = Queue()
         self.results: List[ScraperResult] = []
-        self.stealth_manager = StealthManager()
-        
-    async def producer(self) -> None:
-        """
-        Producer: Loads prompts into the queue.
-        """
-        for prompt_task in self.prompts:
-            await self.queue.put(prompt_task)
-        
-        # Add sentinel values to signal workers to stop
-        for _ in range(config.num_workers):
-            await self.queue.put(None)
+        self.worker_stats: List[WorkerStats] = []
+        self._shutdown = False
     
-    async def consumer(self, worker_id: int, context: BrowserContext) -> None:
+    async def load_prompts(self, prompts: List[dict]) -> None:
         """
-        Consumer: Processes prompts from the queue.
-        Each consumer operates on its own browser tab.
+        Producer: Load prompts into the queue.
+        
+        Args:
+            prompts: List of dicts with 'id' and 'prompt' keys
         """
-        # Create a new page (tab) for this worker
-        page = await context.new_page()
+        logger.info(f"Loading {len(prompts)} prompts into queue")
         
-        # Apply stealth
-        await self.stealth_manager.apply_stealth(page)
-        await self.stealth_manager.add_viewport_randomization(page)
+        for prompt_data in prompts:
+            task = PromptTask(
+                id=prompt_data.get("id", str(len(self.results))),
+                prompt=prompt_data["prompt"]
+            )
+            await self.task_queue.put(task)
         
-        # Initialize services
-        human_service = HumanInteractionService()
-        scraper_service = AIStudioScraperService(page, human_service)
-        
-        # Navigate to AI Studio
-        await scraper_service.navigate_to_studio()
-        
-        print(f"[Worker {worker_id}] Ready and waiting for tasks...")
-        
-        while True:
-            # Get task from queue
-            task = await self.queue.get()
-            
-            # Check for sentinel (None means stop)
-            if task is None:
-                self.queue.task_done()
-                break
-            
-            print(f"[Worker {worker_id}] Processing: {task.id}")
-            
-            # Process the prompt
-            result = await scraper_service.process_single_prompt(task.id, task.prompt)
-            
-            # Store result
-            self.results.append(result)
-            
-            if result.success:
-                print(f"[Worker {worker_id}] ✓ Success: {task.id} ({result.processing_time_seconds:.2f}s)")
-            else:
-                print(f"[Worker {worker_id}] ✗ Failed: {task.id} - {result.error_message}")
-            
-            # Mark task as done
-            self.queue.task_done()
-        
-        # Cleanup
-        await page.close()
-        print(f"[Worker {worker_id}] Finished")
+        logger.info(f"Queue loaded with {self.task_queue.qsize()} tasks")
     
-    async def run(self) -> ScraperMetrics:
+    async def worker(self, worker_id: int) -> None:
+        """
+        Consumer: Process tasks from the queue.
+        
+        Args:
+            worker_id: Unique identifier for this worker
+        """
+        logger.info(f"Worker {worker_id}: Starting")
+        
+        # Create worker stats
+        stats = WorkerStats(worker_id=worker_id)
+        self.worker_stats.append(stats)
+        
+        try:
+            # Create a stealth page for this worker
+            page = await self.browser_manager.create_stealth_page()
+            
+            # Initialize scraper
+            scraper = GoogleAIStudioScraper(
+                page=page,
+                config=self.config.scraper,
+                worker_id=worker_id
+            )
+            await scraper.initialize()
+            
+            # Process tasks from queue
+            while not self._shutdown:
+                try:
+                    # Get task with timeout to allow periodic shutdown checks
+                    task = await asyncio.wait_for(
+                        self.task_queue.get(),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    # Check if queue is empty and we should shutdown
+                    if self.task_queue.empty():
+                        break
+                    continue
+                
+                # Update task status
+                task.status = PromptStatus.PROCESSING
+                logger.info(f"Worker {worker_id}: Processing task {task.id}")
+                
+                # Process the task
+                import time
+                start_time = time.time()
+                
+                result = await scraper.process_prompt(task)
+                
+                processing_time = time.time() - start_time
+                stats.total_processing_time += processing_time
+                
+                if result:
+                    # Success
+                    task.status = PromptStatus.COMPLETED
+                    self.results.append(result)
+                    stats.tasks_completed += 1
+                    logger.info(
+                        f"Worker {worker_id}: Completed task {task.id} "
+                        f"in {processing_time:.2f}s"
+                    )
+                else:
+                    # Failure - retry if possible
+                    if task.can_retry():
+                        task.increment_retry()
+                        task.status = PromptStatus.PENDING
+                        await self.task_queue.put(task)
+                        logger.warning(
+                            f"Worker {worker_id}: Task {task.id} failed, "
+                            f"requeued (retry {task.retry_count}/{task.max_retries})"
+                        )
+                    else:
+                        task.status = PromptStatus.FAILED
+                        stats.tasks_failed += 1
+                        logger.error(
+                            f"Worker {worker_id}: Task {task.id} failed permanently"
+                        )
+                
+                # Mark task as done
+                self.task_queue.task_done()
+                
+                # Small delay between tasks
+                await asyncio.sleep(1)
+        
+        except Exception as e:
+            logger.error(f"Worker {worker_id}: Fatal error: {e}", exc_info=True)
+        
+        finally:
+            logger.info(
+                f"Worker {worker_id}: Shutting down. "
+                f"Completed: {stats.tasks_completed}, Failed: {stats.tasks_failed}"
+            )
+    
+    async def run(self, prompts: List[dict]) -> List[ScraperResult]:
         """
         Main orchestration method.
-        Launches browser, spawns workers, and coordinates the scraping.
-        """
-        start_time = time.time()
         
-        async with async_playwright() as p:
-            # Launch persistent context
-            print("Launching persistent Chrome context...")
-            context = await p.chromium.launch_persistent_context(
-                user_data_dir=str(config.user_data_dir),
-                headless=False,  # Must be False for persistent context
-                executable_path=str(config.chrome_executable_path),
-                args=self.stealth_manager.get_launch_args(),
-                viewport={"width": 1920, "height": 1080},
-                locale="en-US",
-                timezone_id="America/New_York",
+        Args:
+            prompts: List of prompt dictionaries
+            
+        Returns:
+            List of scraper results
+        """
+        try:
+            # Initialize browser
+            await self.browser_manager.initialize()
+            
+            # Load prompts into queue (Producer)
+            await self.load_prompts(prompts)
+            
+            # Start workers (Consumers)
+            num_workers = min(
+                self.config.scraper.max_workers,
+                len(prompts)  # Don't create more workers than tasks
             )
             
-            print(f"Spawning {config.num_workers} workers...")
+            logger.info(f"Starting {num_workers} workers")
             
-            # Create producer task
-            producer_task = asyncio.create_task(self.producer())
-            
-            # Create consumer tasks
-            consumer_tasks = [
-                asyncio.create_task(self.consumer(i, context))
-                for i in range(config.num_workers)
+            workers = [
+                asyncio.create_task(self.worker(worker_id))
+                for worker_id in range(num_workers)
             ]
             
-            # Wait for all tasks to complete
-            await producer_task
-            await self.queue.join()
-            await asyncio.gather(*consumer_tasks)
+            # Wait for all tasks to be processed
+            await self.task_queue.join()
             
-            # Close browser
-            await context.close()
+            # Signal workers to shutdown
+            self._shutdown = True
+            
+            # Wait for all workers to finish
+            await asyncio.gather(*workers, return_exceptions=True)
+            
+            # Log statistics
+            total_completed = sum(s.tasks_completed for s in self.worker_stats)
+            total_failed = sum(s.tasks_failed for s in self.worker_stats)
+            total_time = sum(s.total_processing_time for s in self.worker_stats)
+            
+            logger.info(
+                f"Orchestration complete. "
+                f"Completed: {total_completed}, Failed: {total_failed}, "
+                f"Total processing time: {total_time:.2f}s"
+            )
+            
+            return self.results
         
-        total_time = time.time() - start_time
-        
-        # Calculate metrics
-        successful = sum(1 for r in self.results if r.success)
-        failed = len(self.results) - successful
-        
-        metrics = ScraperMetrics(
-            total_prompts=len(self.prompts),
-            successful=successful,
-            failed=failed,
-            total_time_seconds=total_time
-        )
-        
-        return metrics
-    
-    def save_results(self) -> None:
-        """
-        Saves results to JSON file.
-        Output format: [{"key": "id", "value": "response"}, ...]
-        """
-        output_data = [
-            {"key": r.key, "value": r.value}
-            for r in self.results
-            if r.success
-        ]
-        
-        with open(config.output_file, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"\n✓ Results saved to {config.output_file}")
-
+        finally:
+            # Cleanup
+            await self.browser_manager.close()
