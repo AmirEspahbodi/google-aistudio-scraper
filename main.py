@@ -90,7 +90,7 @@ async def main():
         config = AppConfig(
             browser=BrowserConfig(
                 chrome_executable_path=Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-                user_data_dir=Path(r"C:\Users\amir\AppData\Local\Google\Chrome\User Data"),
+                user_data_dir=Path(r"C:\selenium\ChromeProfile"),
                 headless=False  # Set to True for headless mode
             ),
             scraper=ScraperConfig(

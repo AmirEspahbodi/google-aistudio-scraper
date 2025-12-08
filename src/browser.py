@@ -38,6 +38,7 @@ class BrowserManager:
             "--window-position=0,0",
             "--ignore-certificate-errors",
             "--ignore-certificate-errors-spki-list",
+            "--start-maximized",  # Start maximized so you can see everything
         ]
         
         # Use persistent context to leverage existing login session

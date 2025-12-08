@@ -32,7 +32,7 @@ Open `main.py` and update these two paths:
 
 ```python
 chrome_executable_path=Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-user_data_dir=Path(r"C:\Users\amir\AppData\Local\Google\Chrome\User Data"),
+user_data_dir=Path(r"C:\selenium\ChromeProfile"),
 ```
 
 **💡 Find Your Paths:**

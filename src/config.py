@@ -14,7 +14,7 @@ class BrowserConfig(BaseModel):
         description="Path to Chrome executable"
     )
     user_data_dir: Path = Field(
-        default=Path(r"C:\Users\amir\AppData\Local\Google\Chrome\User Data"),
+        default=Path(r"C:\selenium\ChromeProfile"),
         description="Chrome User Data Directory for persistent session"
     )
     headless: bool = Field(default=False, description="Run browser in headless mode")

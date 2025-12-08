@@ -242,7 +242,7 @@ class PathValidator:
         
         if system == "Windows":
             possible_paths = [
-                Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")),
+                Path(os.path.expandvars(r"C:\selenium\ChromeProfile")),
             ]
         elif system == "Darwin":  # macOS
             possible_paths = [
