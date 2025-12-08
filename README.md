@@ -96,7 +96,7 @@ playwright install chromium
 config = AppConfig(
     browser=BrowserConfig(
         chrome_executable_path=Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-        user_data_dir=Path(r"C:\Users\YourUsername\AppData\Local\Google\Chrome\User Data"),
+        user_data_dir=Path(r"C:\Users\amir\AppData\Local\Google\Chrome\User Data"),
         headless=False
     ),
     scraper=ScraperConfig(
@@ -111,7 +111,7 @@ config = AppConfig(
 
 **Windows:**
 ```
-C:\Users\<YourUsername>\AppData\Local\Google\Chrome\User Data
+C:\Users\amir\AppData\Local\Google\Chrome\User Data
 ```
 
 **macOS:**
