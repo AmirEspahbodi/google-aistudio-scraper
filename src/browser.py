@@ -5,7 +5,6 @@ import asyncio
 import logging
 from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
-from playwright_stealth import stealth_async
 from src.config import BrowserConfig
 
 logger = logging.getLogger(__name__)
@@ -28,12 +27,10 @@ class BrowserManager:
         
         # Launch arguments for stealth and anti-detection
         launch_args = [
-            "--disable-blink-features=AutomationControlled",
+            "--disable-blink-features=AutomationControlled", # Critical: Removes navigator.webdriver flag at browser level
             "--no-sandbox",
             "--disable-dev-shm-usage",
-            # "--disable-web-security",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-setuid-sandbox",
+            "--disable-features=IsolateOrigins,site-per-process", # Helps with iframes, sometimes causes issues so keep an eye on it
             "--disable-infobars",
             "--window-position=0,0",
             "--ignore-certificate-errors",
@@ -47,14 +44,13 @@ class BrowserManager:
             executable_path=str(self.config.chrome_executable_path),
             headless=self.config.headless,
             args=launch_args,
-            viewport={
-                "width": self.config.viewport_width,
-                "height": self.config.viewport_height
-            },
+            # CRITICAL FIX: When using --start-maximized, viewport must be None 
+            # to allow the window to actually fill the screen.
+            viewport=None, 
             locale="en-US",
             timezone_id="America/New_York",
             permissions=["clipboard-read", "clipboard-write"],
-            ignore_default_args=["--enable-automation"],
+            ignore_default_args=["--enable-automation"], # Removes "Chrome is being controlled..." banner
         )
         
         logger.info(f"Browser context initialized with {len(self.context.pages)} existing pages")
@@ -67,35 +63,37 @@ class BrowserManager:
         
         page = await self.context.new_page()
         
-        # Apply playwright-stealth patches
-        await stealth_async(page)
+        # REMOVE THIS LINE
+        # await stealth_async(page) 
         
-        # Additional CDP evasions
+        # Apply Surgical Manual Evasions
+        # This overrides the JS property without breaking the Google App
         await page.add_init_script("""
+            // 1. Pass the Webdriver Test
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
             
+            // 2. Mock Plugins (Google checks this to ensure you aren't headless)
             Object.defineProperty(navigator, 'plugins', {
                 get: () => [1, 2, 3, 4, 5]
             });
             
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en']
-            });
-            
+            // 3. Mock Chrome Runtime
             window.chrome = {
                 runtime: {}
             };
             
-            Object.defineProperty(navigator, 'permissions', {
-                get: () => ({
-                    query: () => Promise.resolve({ state: 'granted' })
-                })
-            });
+            // 4. Pass Permissions Test
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({ state: 'denied' }) :
+                originalQuery(parameters)
+            );
         """)
         
-        logger.debug("Created new stealth page with CDP evasions")
+        logger.debug("Created new stealth page with surgical CDP evasions")
         return page
     
     async def close(self) -> None:
