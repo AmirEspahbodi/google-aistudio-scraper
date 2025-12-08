@@ -95,7 +95,7 @@ async def main():
             ),
             scraper=ScraperConfig(
                 model_name="Gemini 3 Pro Preview",
-                max_workers=3,
+                max_workers=1,
                 typing_delay_min_ms=50,
                 typing_delay_max_ms=150,
             ),

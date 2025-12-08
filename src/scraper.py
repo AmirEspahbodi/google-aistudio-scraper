@@ -45,7 +45,9 @@ class GoogleAIStudioScraper:
         logger.debug(f"Worker {self.worker_id}: Resetting chat context")
         
         # Click Home button in navigation
-        home_button = self.page.get_by_role("button", name="Home")
+        # home_button = self.page.get_by_role("button", name="Home")
+        await self.page.wait_for_selector("//span[contains(@class, 'material-symbols-outlined') and normalize-space()='home']", timeout=10000)
+        home_button = self.page.locator("//span[contains(@class, 'material-symbols-outlined') and normalize-space()='home']")
         await self.interaction.safe_click(self.page, home_button)
         await self.interaction.random_action_delay()
         
@@ -95,7 +97,7 @@ class GoogleAIStudioScraper:
         # Models are typically displayed as buttons or clickable text
         try:
             # Try as button first
-            model_button = self.page.get_by_role("button", name=self.config.model_name)
+            model_button = self.page.get_by_role("button", name=self.config.model_name)[0]
             await model_button.wait_for(state="visible", timeout=5000)
             await self.interaction.safe_click(self.page, model_button)
         except PlaywrightTimeoutError:

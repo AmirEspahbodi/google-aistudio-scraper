@@ -41,7 +41,7 @@ class ScraperConfig(BaseModel):
         default="Gemini 3 Pro Preview",
         description="AI model to select in the interface"
     )
-    max_workers: int = Field(default=3, ge=1, le=10, description="Concurrent browser tabs")
+    max_workers: int = Field(default=1, ge=1, le=10, description="Concurrent browser tabs")
     page_load_timeout: int = Field(default=60000, description="Page load timeout in ms")
     navigation_timeout: int = Field(default=30000, description="Navigation timeout in ms")
     
