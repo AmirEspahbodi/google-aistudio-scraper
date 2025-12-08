@@ -97,7 +97,7 @@ class GoogleAIStudioScraper:
         # Models are typically displayed as buttons or clickable text
         try:
             # Try as button first
-            model_button = self.page.get_by_role("button", name=self.config.model_name)[0]
+            model_button = self.page.get_by_role("button", name=self.config.model_name).first
             await model_button.wait_for(state="visible", timeout=5000)
             await self.interaction.safe_click(self.page, model_button)
         except PlaywrightTimeoutError:
@@ -157,53 +157,40 @@ class GoogleAIStudioScraper:
         """
         logger.debug(f"Worker {self.worker_id}: Submitting prompt")
         
-        # Find and click the Run button
-        run_button = self.page.get_by_role("button", name="Run")
+        # 1. Define Selectors
+        # We use XPath for the run button for consistency
+        run_button = self.page.locator("//button[@aria-label='Run']").first
+        
+        # KEY FIX: Use the specific XPath for the 'stoppable' class state
+        # This selector only matches when the button has the class 'stoppable'
+        stop_button_state = self.page.locator("//button[contains(@class, 'stoppable')]")
+
+        # 2. Click Run
         await self.interaction.safe_click(self.page, run_button)
         
-        # Wait for generation to start (Stop button appears)
+        # 3. Wait for generation to start (Stop state appears)
         logger.debug(f"Worker {self.worker_id}: Waiting for generation to start")
-        stop_button = self.page.get_by_role("button", name="Stop")
         
         try:
-            await stop_button.wait_for(state="visible", timeout=10000)
+            # We wait for the 'stoppable' class to be added to the button
+            await stop_button_state.wait_for(state="visible", timeout=10000)
             logger.debug(f"Worker {self.worker_id}: Generation started")
-        except PlaywrightTimeoutError:
-            logger.warning(f"Worker {self.worker_id}: Stop button did not appear")
-        
-        # Wait for generation to complete (Stop button disappears or Run button re-enables)
+        except Exception as e:
+            # If this fails, the click might not have registered, or generation was instant
+            logger.warning(f"Worker {self.worker_id}: Stop button did not appear. Error: {e}")
+            return # Optional: return early if start wasn't detected
+
+        # 4. Wait for generation to complete (Stop state disappears)
         logger.debug(f"Worker {self.worker_id}: Waiting for generation to complete")
         
-        # Poll for completion with timeout
-        max_wait = 120  # 2 minutes max
-        poll_interval = 1
-        elapsed = 0
-        
-        while elapsed < max_wait:
-            # Check if Stop button is hidden
-            try:
-                is_stop_hidden = not await stop_button.is_visible()
-                if is_stop_hidden:
-                    logger.debug(f"Worker {self.worker_id}: Generation completed (Stop hidden)")
-                    break
-            except Exception:
-                pass
-            
-            # Check if Run button is enabled
-            try:
-                is_run_enabled = await run_button.is_enabled()
-                if is_run_enabled:
-                    logger.debug(f"Worker {self.worker_id}: Generation completed (Run enabled)")
-                    break
-            except Exception:
-                pass
-            
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-        
-        if elapsed >= max_wait:
+        try:
+            # Playwright handles the polling internally with wait_for(state="hidden")
+            # This waits for the 'stoppable' class to be removed from the DOM
+            await stop_button_state.wait_for(state="hidden", timeout=120000) # 2 mins max
+            logger.debug(f"Worker {self.worker_id}: Generation completed (Stop hidden)")
+        except Exception:
             logger.warning(f"Worker {self.worker_id}: Timeout waiting for completion")
-        
+
         # Additional buffer to ensure rendering is complete
         await asyncio.sleep(2)
     
