@@ -1,21 +1,21 @@
 [project]
-name = "google-ai-studio-scraper"
+name = "gass"
 version = "0.1.0"
 description = ""
 authors = [
     {name = "amir.espahbodi",email = "dev.amir.espahbodi@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<4.0"
 dependencies = [
     "playwright (>=1.56.0,<2.0.0)",
-    "aiofiles (>=25.1.0,<26.0.0)",
-    "typing-extensions (>=4.15.0,<5.0.0)",
-    "colorlog (>=6.10.1,<7.0.0)"
+    "playwright-stealth (>=2.0.0,<3.0.0)",
+    "pydantic (>=2.12.5,<3.0.0)",
+    "aiofiles (>=25.1.0,<26.0.0)"
 ]
 
 [tool.poetry]
-packages = [{include = "google_ai_studio_scraper", from = "src"}]
+packages = [{include = "*", from = "src"}]
 
 
 [build-system]
