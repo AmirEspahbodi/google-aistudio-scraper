@@ -6,7 +6,7 @@ import logging
 import asyncio
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 from datetime import datetime
 import aiofiles
 
@@ -30,33 +30,54 @@ class IncrementalJSONSaver:
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 f.write('[]')
 
+    def get_existing_keys(self) -> Set[str]:
+        """
+        Reads the current output file to identify which tasks (keys) are already completed.
+        Returns a set of keys (IDs) found in the file.
+        """
+        if not self.filepath.exists():
+            return set()
+            
+        try:
+            # We read synchronously here as this happens once during startup
+            with open(self.filepath, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if not content:
+                    return set()
+                
+                data = json.loads(content)
+                if isinstance(data, list):
+                    # Extract 'key' from each result entry
+                    return {item.get('key') for item in data if isinstance(item, dict) and 'key' in item}
+                return set()
+                
+        except json.JSONDecodeError:
+            logger.warning(f"⚠️ Could not parse existing results in {self.filepath}. Resuming might re-process some tasks.")
+            return set()
+        except Exception as e:
+            logger.error(f"Error reading existing results: {e}")
+            return set()
+
     async def save(self, data: Dict[str, Any]) -> None:
-        """
-        Thread-safe async wrapper for the sync save operation.
-        """
+        """Async wrapper for the sync save operation."""
         async with self.lock:
-            # Offload blocking IO to a thread to keep the event loop responsive
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._save_sync, data)
 
     def _save_sync(self, data: Dict[str, Any]) -> None:
         """
         Synchronous logic to append JSON to a file array.
-        Uses binary mode for precise seeking to avoid parsing the whole file.
+        Uses binary mode for precise seeking.
         """
         try:
-            # Open in Read/Write Binary mode
             with open(self.filepath, 'rb+') as f:
-                f.seek(0, 2)  # Seek to end of file
+                f.seek(0, 2)  # Seek to end
                 end_pos = f.tell()
                 
-                # Search backwards for the closing bracket ']'
-                # We scan the last small chunk of bytes to find the end of the JSON array
+                # Search backwards for ']'
                 pos = end_pos
                 found_bracket = False
-                
-                # Backtrack limit to prevent infinite loops on corrupted files
-                search_limit = min(end_pos, 1024) 
+                search_limit = min(end_pos, 2048) # Look back 2KB
                 
                 for i in range(1, search_limit + 1):
                     pos = end_pos - i
@@ -67,18 +88,13 @@ class IncrementalJSONSaver:
                         break
                 
                 if not found_bracket:
-                    # Fallback: If file is corrupted or empty, just append
-                    # This shouldn't happen if initialized correctly
-                    logger.warning(f"Could not find closing bracket in {self.filepath}, appending raw.")
+                    # Fallback for empty/corrupt files
                     f.seek(0, 2)
                     f.write(b',\n' + json.dumps(data, ensure_ascii=False).encode('utf-8') + b']')
                     return
 
-                # Check if the array is effectively empty (previous char is '[')
-                # We are currently at the position of ']'
+                # Check if we need a comma (if array is not empty)
                 needs_comma = True
-                
-                # Look at the character before ']' ignoring whitespace
                 scan_pos = pos - 1
                 while scan_pos >= 0:
                     f.seek(scan_pos)
@@ -90,9 +106,8 @@ class IncrementalJSONSaver:
                         needs_comma = False
                     break
 
-                # Overwrite the ']' and append the new data
+                # Overwrite ']' and add new entry
                 f.seek(pos)
-                
                 entry_json = json.dumps(data, ensure_ascii=False, indent=2)
                 entry_bytes = entry_json.encode('utf-8')
                 
@@ -105,34 +120,28 @@ class IncrementalJSONSaver:
             logger.error(f"Failed to save incremental result: {e}")
             raise
 
+# Helper functions aliases
+async def load_prompts_from_json(filepath: str) -> List[Dict[str, str]]:
+    return await PromptLoader.from_json_file(Path(filepath))
+
 class PromptLoader:
     """Utility class for loading prompts from various sources."""
     
     @staticmethod
     async def from_json_file(filepath: Path) -> List[Dict[str, str]]:
-        """
-        Load prompts from a JSON file.
-        
-        Args:
-            filepath: Path to JSON file
-            
-        Returns:
-            List of prompt dictionaries
-            
-        Example JSON format:
-            [
-                {"id": "1", "prompt": "Your prompt here"},
-                {"id": "2", "prompt": "Another prompt"}
-            ]
-        """
+        """Load prompts from a JSON file."""
         logger.info(f"Loading prompts from {filepath}")
         
+        if not filepath.exists():
+            raise FileNotFoundError(f"Prompts file not found at: {filepath}")
+
         async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
             content = await f.read()
             prompts = json.loads(content)
         
         logger.info(f"Loaded {len(prompts)} prompts from {filepath}")
         return prompts
+
     
     @staticmethod
     async def from_text_file(filepath: Path) -> List[Dict[str, str]]:

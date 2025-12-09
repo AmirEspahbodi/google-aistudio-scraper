@@ -228,45 +228,49 @@ class GoogleAIStudioScraper:
     async def extract_response(self) -> Optional[str]:
         """
         Extract the AI response from the last message in the conversation.
-        Refactored to use specific 'data-turn-role' and 'turn-content' selectors.
+        Includes a wait-for-text loop to handle streaming latency and background throttling.
         """
         logger.debug(f"Worker {self.worker_id}: Extracting response")
         
         try:
-            # 1. Wait a brief moment for any final rendering
+            # 1. Wait a brief moment for initial rendering
             await asyncio.sleep(1)
             
-            # 2. Locate all elements that are identified as Model turns
-            # We use the specific data attribute found in your HTML
+            # 2. Locate the LAST model turn
             model_turns = self.page.locator('div[data-turn-role="Model"]')
             
-            # 3. Check if we found any
             if await model_turns.count() == 0:
-                logger.warning(f"Worker {self.worker_id}: No model turns found with data-turn-role='Model'")
+                logger.warning(f"Worker {self.worker_id}: No model turns found")
                 return None
             
-            # 4. Target the LAST model turn (the one corresponding to our current prompt)
             last_turn = model_turns.last
             
-            # 5. Find the content container inside that turn
-            # Based on HTML: <div class="turn-content">
+            # 3. Find the content container
             content_container = last_turn.locator('.turn-content')
             
-            # 6. Wait for the content to be attached to the DOM
-            await content_container.wait_for(state="attached", timeout=5000)
-            
-            # 7. Extract the text
-            # inner_text() is preferred over text_content() as it handles 
-            # newlines/spacing for <p> and <ul> tags correctly.
-            response_text = await content_container.inner_text()
-            
-            if response_text and len(response_text.strip()) > 0:
-                clean_text = response_text.strip()
-                logger.debug(f"Worker {self.worker_id}: Extracted {len(clean_text)} chars")
-                return clean_text
-            else:
-                logger.warning(f"Worker {self.worker_id}: Content container found but text was empty")
+            # 4. Wait for container to be attached
+            try:
+                await content_container.wait_for(state="attached", timeout=10000)
+            except Exception:
+                logger.warning(f"Worker {self.worker_id}: Content container never appeared")
                 return None
+
+            # 5. POLLING LOOP: Wait for text to actually appear (Fixes empty text bug)
+            # We try for up to 10 seconds to get non-empty text
+            for _ in range(20):  # 20 attempts * 0.5s = 10 seconds
+                response_text = await content_container.inner_text()
+                
+                if response_text and len(response_text.strip()) > 0:
+                    clean_text = response_text.strip()
+                    logger.debug(f"Worker {self.worker_id}: Extracted {len(clean_text)} chars")
+                    return clean_text
+                
+                # If empty, wait a bit and try again (waiting for stream to start)
+                await asyncio.sleep(0.5)
+
+            # If we reach here, the container was found but text never appeared
+            logger.warning(f"Worker {self.worker_id}: Content container found but text remained empty (Stream timeout)")
+            return None
                 
         except Exception as e:
             logger.error(f"Worker {self.worker_id}: Error extracting response: {e}")
