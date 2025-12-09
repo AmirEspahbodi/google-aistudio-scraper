@@ -3,6 +3,8 @@ Utility Functions - Helper methods for common operations
 """
 import json
 import logging
+import asyncio
+import os
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
@@ -10,6 +12,98 @@ import aiofiles
 
 logger = logging.getLogger(__name__)
 
+
+class IncrementalJSONSaver:
+    """
+    Manages thread-safe, incremental saving of JSON entries to a file.
+    Maintains a valid JSON array structure [ ... ] at all times.
+    """
+    def __init__(self, filepath: Path):
+        self.filepath = filepath
+        self.lock = asyncio.Lock()
+        
+        # Ensure directory exists
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize file with empty array if it doesn't exist or is empty
+        if not self.filepath.exists() or self.filepath.stat().st_size == 0:
+            with open(self.filepath, 'w', encoding='utf-8') as f:
+                f.write('[]')
+
+    async def save(self, data: Dict[str, Any]) -> None:
+        """
+        Thread-safe async wrapper for the sync save operation.
+        """
+        async with self.lock:
+            # Offload blocking IO to a thread to keep the event loop responsive
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._save_sync, data)
+
+    def _save_sync(self, data: Dict[str, Any]) -> None:
+        """
+        Synchronous logic to append JSON to a file array.
+        Uses binary mode for precise seeking to avoid parsing the whole file.
+        """
+        try:
+            # Open in Read/Write Binary mode
+            with open(self.filepath, 'rb+') as f:
+                f.seek(0, 2)  # Seek to end of file
+                end_pos = f.tell()
+                
+                # Search backwards for the closing bracket ']'
+                # We scan the last small chunk of bytes to find the end of the JSON array
+                pos = end_pos
+                found_bracket = False
+                
+                # Backtrack limit to prevent infinite loops on corrupted files
+                search_limit = min(end_pos, 1024) 
+                
+                for i in range(1, search_limit + 1):
+                    pos = end_pos - i
+                    f.seek(pos)
+                    char = f.read(1)
+                    if char == b']':
+                        found_bracket = True
+                        break
+                
+                if not found_bracket:
+                    # Fallback: If file is corrupted or empty, just append
+                    # This shouldn't happen if initialized correctly
+                    logger.warning(f"Could not find closing bracket in {self.filepath}, appending raw.")
+                    f.seek(0, 2)
+                    f.write(b',\n' + json.dumps(data, ensure_ascii=False).encode('utf-8') + b']')
+                    return
+
+                # Check if the array is effectively empty (previous char is '[')
+                # We are currently at the position of ']'
+                needs_comma = True
+                
+                # Look at the character before ']' ignoring whitespace
+                scan_pos = pos - 1
+                while scan_pos >= 0:
+                    f.seek(scan_pos)
+                    prev_char = f.read(1)
+                    if prev_char.isspace():
+                        scan_pos -= 1
+                        continue
+                    if prev_char == b'[':
+                        needs_comma = False
+                    break
+
+                # Overwrite the ']' and append the new data
+                f.seek(pos)
+                
+                entry_json = json.dumps(data, ensure_ascii=False, indent=2)
+                entry_bytes = entry_json.encode('utf-8')
+                
+                if needs_comma:
+                    f.write(b',\n' + entry_bytes + b'\n]')
+                else:
+                    f.write(b'\n' + entry_bytes + b'\n]')
+                    
+        except Exception as e:
+            logger.error(f"Failed to save incremental result: {e}")
+            raise
 
 class PromptLoader:
     """Utility class for loading prompts from various sources."""

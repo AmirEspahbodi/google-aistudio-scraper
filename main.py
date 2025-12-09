@@ -118,7 +118,7 @@ async def main():
         results = await orchestrator.run(prompts)
         
         # Save results
-        await save_results(results, config.output_file)
+        # await save_results(results, config.output_file)
         
         # Print summary
         logger.info("=" * 80)

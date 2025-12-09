@@ -9,6 +9,7 @@ from src.config import AppConfig
 from src.models import PromptTask, ScraperResult, PromptStatus, WorkerStats
 from src.browser import BrowserManager
 from src.scraper import GoogleAIStudioScraper
+from src.utils import IncrementalJSONSaver  # <--- IMPORT ADDED
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +24,23 @@ class ScraperOrchestrator:
         self.results: List[ScraperResult] = []
         self.worker_stats: List[WorkerStats] = []
         self._shutdown = False
-    
+        
+        # Initialize Incremental Saver
+        # This creates the file immediately with [] if it doesn't exist
+        self.saver = IncrementalJSONSaver(config.output_file)
+
     async def load_prompts(self, prompts: List[dict]) -> None:
         """
         Producer: Load prompts into the queue.
-        
-        Args:
-            prompts: List of dicts with 'id' and 'prompt' keys
         """
         logger.info(f"Loading {len(prompts)} prompts into queue")
         
         for prompt_data in prompts:
+            # Ensure ID is present
+            task_id = prompt_data.get("id") or str(len(self.results))
+            
             task = PromptTask(
-                id=prompt_data.get("id", str(len(self.results))),
+                id=task_id,
                 prompt=prompt_data["prompt"]
             )
             await self.task_queue.put(task)
@@ -45,21 +50,15 @@ class ScraperOrchestrator:
     async def worker(self, worker_id: int) -> None:
         """
         Consumer: Process tasks from the queue.
-        
-        Args:
-            worker_id: Unique identifier for this worker
         """
         logger.info(f"Worker {worker_id}: Starting")
         
-        # Create worker stats
         stats = WorkerStats(worker_id=worker_id)
         self.worker_stats.append(stats)
         
         try:
-            # Create a stealth page for this worker
             page = await self.browser_manager.create_stealth_page()
             
-            # Initialize scraper
             scraper = GoogleAIStudioScraper(
                 page=page,
                 config=self.config.scraper,
@@ -67,25 +66,20 @@ class ScraperOrchestrator:
             )
             await scraper.initialize()
             
-            # Process tasks from queue
             while not self._shutdown:
                 try:
-                    # Get task with timeout to allow periodic shutdown checks
                     task = await asyncio.wait_for(
                         self.task_queue.get(),
                         timeout=1.0
                     )
                 except asyncio.TimeoutError:
-                    # Check if queue is empty and we should shutdown
                     if self.task_queue.empty():
                         break
                     continue
                 
-                # Update task status
                 task.status = PromptStatus.PROCESSING
                 logger.info(f"Worker {worker_id}: Processing task {task.id}")
                 
-                # Process the task
                 import time
                 start_time = time.time()
                 
@@ -95,16 +89,29 @@ class ScraperOrchestrator:
                 stats.total_processing_time += processing_time
                 
                 if result:
-                    # Success
+                    # Success logic
                     task.status = PromptStatus.COMPLETED
+                    
+                    # 1. Update In-Memory List (optional, good for final stats)
                     self.results.append(result)
+                    
+                    # 2. INCREMENTAL SAVE (Real-time I/O)
+                    # Convert Pydantic model to dict for serialization
+                    result_dict = {
+                        "key": result.key,
+                        "value": result.value,
+                        "timestamp": result.timestamp.isoformat(),
+                        "worker_id": result.worker_id
+                    }
+                    await self.saver.save(result_dict)
+                    
                     stats.tasks_completed += 1
                     logger.info(
-                        f"Worker {worker_id}: Completed task {task.id} "
+                        f"Worker {worker_id}: Completed & Saved task {task.id} "
                         f"in {processing_time:.2f}s"
                     )
                 else:
-                    # Failure - retry if possible
+                    # Failure logic
                     if task.can_retry():
                         task.increment_retry()
                         task.status = PromptStatus.PENDING
@@ -120,21 +127,16 @@ class ScraperOrchestrator:
                             f"Worker {worker_id}: Task {task.id} failed permanently"
                         )
                 
-                # Mark task as done
                 self.task_queue.task_done()
-                
-                # Small delay between tasks
                 await asyncio.sleep(1)
         
         except Exception as e:
             logger.error(f"Worker {worker_id}: Fatal error: {e}", exc_info=True)
         
         finally:
-            logger.info(
-                f"Worker {worker_id}: Shutting down. "
-                f"Completed: {stats.tasks_completed}, Failed: {stats.tasks_failed}"
-            )
-    
+            logger.info(f"Worker {worker_id}: Shutting down.")
+
+
     async def run(self, prompts: List[dict]) -> List[ScraperResult]:
         """
         Main orchestration method.
