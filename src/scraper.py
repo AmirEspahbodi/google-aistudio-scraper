@@ -228,45 +228,44 @@ class GoogleAIStudioScraper:
     async def extract_response(self) -> Optional[str]:
         """
         Extract the AI response from the last message in the conversation.
-        Returns the innerText of the response container.
+        Refactored to use specific 'data-turn-role' and 'turn-content' selectors.
         """
         logger.debug(f"Worker {self.worker_id}: Extracting response")
         
-        # Wait a moment for content to render
-        await asyncio.sleep(1)
-        
-        # Try to find response content
-        # Responses are typically in elements with role="article" or similar
         try:
-            # Look for the last message that's not from the user
-            # This is heuristic-based since Google's structure may vary
+            # 1. Wait a brief moment for any final rendering
+            await asyncio.sleep(1)
             
-            # Try finding by common patterns
-            response_selectors = [
-                '[data-test-id*="response"]',
-                '[data-test-id*="message"]',
-                '.response-content',
-                '.model-response',
-            ]
+            # 2. Locate all elements that are identified as Model turns
+            # We use the specific data attribute found in your HTML
+            model_turns = self.page.locator('div[data-turn-role="Model"]')
             
-            # Fallback: get all text content from main area
-            main_content = self.page.locator('main')
-            text = await main_content.inner_text()
+            # 3. Check if we found any
+            if await model_turns.count() == 0:
+                logger.warning(f"Worker {self.worker_id}: No model turns found with data-turn-role='Model'")
+                return None
             
-            # Basic extraction: get everything after our prompt
-            # This is a simplified approach - in production, you'd want more robust parsing
-            lines = text.split('\n')
+            # 4. Target the LAST model turn (the one corresponding to our current prompt)
+            last_turn = model_turns.last
             
-            # Find lines that look like responses (contain substantial text)
-            response_lines = [line.strip() for line in lines if len(line.strip()) > 20]
+            # 5. Find the content container inside that turn
+            # Based on HTML: <div class="turn-content">
+            content_container = last_turn.locator('.turn-content')
             
-            if response_lines:
-                # Take the last substantial text block as the response
-                response = response_lines[-1]
-                logger.debug(f"Worker {self.worker_id}: Extracted {len(response)} chars")
-                return response
+            # 6. Wait for the content to be attached to the DOM
+            await content_container.wait_for(state="attached", timeout=5000)
+            
+            # 7. Extract the text
+            # inner_text() is preferred over text_content() as it handles 
+            # newlines/spacing for <p> and <ul> tags correctly.
+            response_text = await content_container.inner_text()
+            
+            if response_text and len(response_text.strip()) > 0:
+                clean_text = response_text.strip()
+                logger.debug(f"Worker {self.worker_id}: Extracted {len(clean_text)} chars")
+                return clean_text
             else:
-                logger.warning(f"Worker {self.worker_id}: No response content found")
+                logger.warning(f"Worker {self.worker_id}: Content container found but text was empty")
                 return None
                 
         except Exception as e:
