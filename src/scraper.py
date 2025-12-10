@@ -214,7 +214,49 @@ class GoogleAIStudioScraper:
             logger.warning(f"Worker {self.worker_id}: Timeout or error waiting for completion signal: {e}")
 
         await asyncio.sleep(5)
-    
+
+    async def scroll_to_latest_response(self) -> None:
+        """
+        Scrolls to the bottom of the chat interface to ensure the latest response
+        is fully rendered and populated in the DOM. This fixes issues with 
+        virtual scrolling where off-screen text appears empty.
+        """
+        logger.debug(f"Worker {self.worker_id}: Scrolling to reveal latest response")
+        
+        try:
+            # Strategy 1: Find the last model turn and explicitly scroll it into view
+            model_turns = self.page.locator('div[data-turn-role="Model"]')
+            count = await model_turns.count()
+            
+            if count > 0:
+                last_turn = model_turns.last
+                
+                # 1. Standard scroll into view
+                await last_turn.scroll_into_view_if_needed()
+                
+                # 2. Mouse Wheel Scroll (Stronger trigger for virtual lists)
+                # We move the mouse over the element and scroll down
+                box = await last_turn.bounding_box()
+                if box:
+                    # Center mouse on the response
+                    await self.page.mouse.move(
+                        box["x"] + box["width"] / 2, 
+                        box["y"] + box["height"] / 2
+                    )
+                    # Scroll down significantly to ensure bottom is hit
+                    await self.page.mouse.wheel(0, 5000)
+            
+            # Strategy 2: Keyboard 'End' Press (Backup)
+            # This is often the most reliable way to scroll a chat container to the absolute bottom
+            await self.page.keyboard.press("End")
+            
+            # Allow time for the DOM to update/render after the scroll
+            await asyncio.sleep(1.0)
+            
+        except Exception as e:
+            # Log warning but don't fail the task; extraction might still succeed
+            logger.warning(f"Worker {self.worker_id}: Warning during scroll attempt: {e}")
+
     async def extract_response(self) -> Optional[str]:
         """
         Extract the AI response from the last message in the conversation.
@@ -293,6 +335,9 @@ class GoogleAIStudioScraper:
             
             # Step 4: Submit and wait for completion
             await self.submit_and_wait()
+
+            # Step 4.5: Scroll to bottom to ensure text capture
+            await self.scroll_to_latest_response()
             
             # Step 5: Extract response
             response = await self.extract_response()
