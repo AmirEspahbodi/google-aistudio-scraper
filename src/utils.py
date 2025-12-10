@@ -1,6 +1,7 @@
 """
 Utility Functions - Helper methods for common operations
 """
+
 import json
 import logging
 import asyncio
@@ -18,17 +19,18 @@ class IncrementalJSONSaver:
     Manages thread-safe, incremental saving of JSON entries to a file.
     Maintains a valid JSON array structure [ ... ] at all times.
     """
+
     def __init__(self, filepath: Path):
         self.filepath = filepath
         self.lock = asyncio.Lock()
-        
+
         # Ensure directory exists
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize file with empty array if it doesn't exist or is empty
         if not self.filepath.exists() or self.filepath.stat().st_size == 0:
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                f.write('[]')
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                f.write("[]")
 
     def get_existing_keys(self) -> Set[str]:
         """
@@ -37,22 +39,28 @@ class IncrementalJSONSaver:
         """
         if not self.filepath.exists():
             return set()
-            
+
         try:
             # We read synchronously here as this happens once during startup
-            with open(self.filepath, 'r', encoding='utf-8') as f:
+            with open(self.filepath, "r", encoding="utf-8") as f:
                 content = f.read().strip()
                 if not content:
                     return set()
-                
+
                 data = json.loads(content)
                 if isinstance(data, list):
                     # Extract 'key' from each result entry
-                    return {item.get('key') for item in data if isinstance(item, dict) and 'key' in item}
+                    return {
+                        item.get("key")
+                        for item in data
+                        if isinstance(item, dict) and "key" in item
+                    }
                 return set()
-                
+
         except json.JSONDecodeError:
-            logger.warning(f"⚠️ Could not parse existing results in {self.filepath}. Resuming might re-process some tasks.")
+            logger.warning(
+                f"⚠️ Could not parse existing results in {self.filepath}. Resuming might re-process some tasks."
+            )
             return set()
         except Exception as e:
             logger.error(f"Error reading existing results: {e}")
@@ -70,27 +78,31 @@ class IncrementalJSONSaver:
         Uses binary mode for precise seeking.
         """
         try:
-            with open(self.filepath, 'rb+') as f:
+            with open(self.filepath, "rb+") as f:
                 f.seek(0, 2)  # Seek to end
                 end_pos = f.tell()
-                
+
                 # Search backwards for ']'
                 pos = end_pos
                 found_bracket = False
-                search_limit = min(end_pos, 2048) # Look back 2KB
-                
+                search_limit = min(end_pos, 2048)  # Look back 2KB
+
                 for i in range(1, search_limit + 1):
                     pos = end_pos - i
                     f.seek(pos)
                     char = f.read(1)
-                    if char == b']':
+                    if char == b"]":
                         found_bracket = True
                         break
-                
+
                 if not found_bracket:
                     # Fallback for empty/corrupt files
                     f.seek(0, 2)
-                    f.write(b',\n' + json.dumps(data, ensure_ascii=False).encode('utf-8') + b']')
+                    f.write(
+                        b",\n"
+                        + json.dumps(data, ensure_ascii=False).encode("utf-8")
+                        + b"]"
+                    )
                     return
 
                 # Check if we need a comma (if array is not empty)
@@ -102,109 +114,103 @@ class IncrementalJSONSaver:
                     if prev_char.isspace():
                         scan_pos -= 1
                         continue
-                    if prev_char == b'[':
+                    if prev_char == b"[":
                         needs_comma = False
                     break
 
                 # Overwrite ']' and add new entry
                 f.seek(pos)
                 entry_json = json.dumps(data, ensure_ascii=False, indent=2)
-                entry_bytes = entry_json.encode('utf-8')
-                
+                entry_bytes = entry_json.encode("utf-8")
+
                 if needs_comma:
-                    f.write(b',\n' + entry_bytes + b'\n]')
+                    f.write(b",\n" + entry_bytes + b"\n]")
                 else:
-                    f.write(b'\n' + entry_bytes + b'\n]')
-                    
+                    f.write(b"\n" + entry_bytes + b"\n]")
+
         except Exception as e:
             logger.error(f"Failed to save incremental result: {e}")
             raise
+
 
 # Helper functions aliases
 async def load_prompts_from_json(filepath: str) -> List[Dict[str, str]]:
     return await PromptLoader.from_json_file(Path(filepath))
 
+
 class PromptLoader:
     """Utility class for loading prompts from various sources."""
-    
+
     @staticmethod
     async def from_json_file(filepath: Path) -> List[Dict[str, str]]:
         """Load prompts from a JSON file."""
         logger.info(f"Loading prompts from {filepath}")
-        
+
         if not filepath.exists():
             raise FileNotFoundError(f"Prompts file not found at: {filepath}")
 
-        async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
+        async with aiofiles.open(filepath, "r", encoding="utf-8") as f:
             content = await f.read()
             prompts = json.loads(content)
-        
+
         logger.info(f"Loaded {len(prompts)} prompts from {filepath}")
         return prompts
 
-    
     @staticmethod
     async def from_text_file(filepath: Path) -> List[Dict[str, str]]:
         """
         Load prompts from a text file (one prompt per line).
-        
+
         Args:
             filepath: Path to text file
-            
+
         Returns:
             List of prompt dictionaries with auto-generated IDs
         """
         logger.info(f"Loading prompts from {filepath}")
-        
+
         prompts = []
-        async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
+        async with aiofiles.open(filepath, "r", encoding="utf-8") as f:
             async for i, line in enumerate(f):
                 line = line.strip()
                 if line:  # Skip empty lines
-                    prompts.append({
-                        "id": f"prompt_{i+1:03d}",
-                        "prompt": line
-                    })
-        
+                    prompts.append({"id": f"prompt_{i + 1:03d}", "prompt": line})
+
         logger.info(f"Loaded {len(prompts)} prompts from {filepath}")
         return prompts
-    
+
     @staticmethod
     def from_list(prompts: List[str]) -> List[Dict[str, str]]:
         """
         Convert a list of strings to prompt dictionaries.
-        
+
         Args:
             prompts: List of prompt strings
-            
+
         Returns:
             List of prompt dictionaries with auto-generated IDs
         """
         return [
-            {"id": f"prompt_{i+1:03d}", "prompt": prompt}
+            {"id": f"prompt_{i + 1:03d}", "prompt": prompt}
             for i, prompt in enumerate(prompts)
         ]
 
 
 class ResultExporter:
     """Utility class for exporting results to various formats."""
-    
+
     @staticmethod
-    async def to_json(
-        results: List[Any], 
-        filepath: Path,
-        pretty: bool = True
-    ) -> None:
+    async def to_json(results: List[Any], filepath: Path, pretty: bool = True) -> None:
         """
         Export results to JSON file.
-        
+
         Args:
             results: List of ScraperResult objects
             filepath: Output file path
             pretty: Whether to format with indentation
         """
         logger.info(f"Exporting {len(results)} results to {filepath}")
-        
+
         # Convert to JSON-serializable format
         data = [
             {
@@ -213,69 +219,72 @@ class ResultExporter:
             }
             for r in results
         ]
-        
+
         indent = 2 if pretty else None
         json_str = json.dumps(data, indent=indent, ensure_ascii=False)
-        
-        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
+
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             await f.write(json_str)
-        
+
         logger.info(f"Results exported to {filepath}")
-    
 
     @staticmethod
     async def to_markdown(results: List[Any], filepath: Path) -> None:
         """
         Export results to Markdown file.
-        
+
         Args:
             results: List of ScraperResult objects
             filepath: Output file path
         """
         logger.info(f"Exporting {len(results)} results to {filepath}")
-        
-        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
+
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
             # Write header
             await f.write("# Google AI Studio Scraper Results\n\n")
             await f.write(f"Generated: {datetime.now().isoformat()}\n\n")
             await f.write(f"Total Results: {len(results)}\n\n")
             await f.write("---\n\n")
-            
+
             # Write each result
             for i, r in enumerate(results, 1):
                 await f.write(f"## Result {i}: {r.key}\n\n")
                 await f.write(f"**Response:**\n\n")
                 await f.write(f"{r.value}\n\n")
                 await f.write("---\n\n")
-        
+
         logger.info(f"Results exported to {filepath}")
 
 
 class PathValidator:
     """Utility class for validating and finding system paths."""
-    
+
     @staticmethod
     def find_chrome_executable() -> Path:
         """
         Attempt to find Chrome executable on the system.
-        
+
         Returns:
             Path to Chrome executable
-            
+
         Raises:
             FileNotFoundError: If Chrome cannot be found
         """
         import platform
         import os
-        
+
         system = platform.system()
         possible_paths = []
-        
+
         if system == "Windows":
             possible_paths = [
                 Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
                 Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
-                Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")),
+                Path(
+                    os.path.expandvars(
+                        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+                    )
+                ),
             ]
         elif system == "Darwin":  # macOS
             possible_paths = [
@@ -288,34 +297,34 @@ class PathValidator:
                 Path("/usr/bin/chromium"),
                 Path("/usr/bin/chromium-browser"),
             ]
-        
+
         for path in possible_paths:
             if path.exists():
                 logger.info(f"Found Chrome at: {path}")
                 return path
-        
+
         raise FileNotFoundError(
             f"Could not find Chrome executable for {system}. "
             f"Please specify chrome_executable_path manually."
         )
-    
+
     @staticmethod
     def find_chrome_user_data() -> Path:
         """
         Attempt to find Chrome User Data directory.
-        
+
         Returns:
             Path to Chrome User Data directory
-            
+
         Raises:
             FileNotFoundError: If directory cannot be found
         """
         import platform
         import os
-        
+
         system = platform.system()
         possible_paths = []
-        
+
         if system == "Windows":
             possible_paths = [
                 Path(os.path.expandvars(r"C:\selenium\ChromeProfile")),
@@ -329,12 +338,12 @@ class PathValidator:
                 Path.home() / ".config/google-chrome",
                 Path.home() / ".config/chromium",
             ]
-        
+
         for path in possible_paths:
             if path.exists():
                 logger.info(f"Found Chrome User Data at: {path}")
                 return path
-        
+
         raise FileNotFoundError(
             f"Could not find Chrome User Data directory for {system}. "
             f"Please specify user_data_dir manually."
@@ -343,21 +352,21 @@ class PathValidator:
 
 class StatsCalculator:
     """Utility class for calculating scraping statistics."""
-    
+
     @staticmethod
     def calculate_success_rate(total: int, successful: int) -> float:
         """Calculate success rate percentage."""
         if total == 0:
             return 0.0
         return (successful / total) * 100
-    
+
     @staticmethod
     def calculate_average_time(total_time: float, count: int) -> float:
         """Calculate average processing time."""
         if count == 0:
             return 0.0
         return total_time / count
-    
+
     @staticmethod
     def format_duration(seconds: float) -> str:
         """Format duration in human-readable format."""
@@ -369,15 +378,15 @@ class StatsCalculator:
         else:
             hours = seconds / 3600
             return f"{hours:.2f}h"
-    
+
     @staticmethod
     def generate_summary(worker_stats: List[Any]) -> Dict[str, Any]:
         """
         Generate summary statistics from worker stats.
-        
+
         Args:
             worker_stats: List of WorkerStats objects
-            
+
         Returns:
             Dictionary with summary statistics
         """
@@ -385,7 +394,7 @@ class StatsCalculator:
         total_failed = sum(s.tasks_failed for s in worker_stats)
         total_time = sum(s.total_processing_time for s in worker_stats)
         total_tasks = total_completed + total_failed
-        
+
         return {
             "total_tasks": total_tasks,
             "successful": total_completed,
@@ -398,7 +407,7 @@ class StatsCalculator:
                 total_time, total_completed
             ),
             "formatted_total_time": StatsCalculator.format_duration(total_time),
-            "workers_used": len(worker_stats)
+            "workers_used": len(worker_stats),
         }
 
 
