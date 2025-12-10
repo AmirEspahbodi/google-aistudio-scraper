@@ -100,8 +100,6 @@ class ScraperOrchestrator:
                     result_dict = {
                         "key": result.key,
                         "value": result.value,
-                        "timestamp": result.timestamp.isoformat(),
-                        "worker_id": result.worker_id
                     }
                     await self.saver.save(result_dict)
                     

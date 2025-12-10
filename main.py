@@ -38,7 +38,7 @@ async def main():
             ),
             scraper=ScraperConfig(
                 model_name="Gemini 3 Pro Preview",
-                max_workers=4,
+                max_workers=1,
             ),
             output_file=Path("final_result.json")
         )

@@ -210,8 +210,6 @@ class ResultExporter:
             {
                 "key": r.key,
                 "value": r.value,
-                "timestamp": r.timestamp.isoformat(),
-                "worker_id": r.worker_id
             }
             for r in results
         ]
@@ -224,30 +222,7 @@ class ResultExporter:
         
         logger.info(f"Results exported to {filepath}")
     
-    @staticmethod
-    async def to_csv(results: List[Any], filepath: Path) -> None:
-        """
-        Export results to CSV file.
-        
-        Args:
-            results: List of ScraperResult objects
-            filepath: Output file path
-        """
-        logger.info(f"Exporting {len(results)} results to {filepath}")
-        
-        async with aiofiles.open(filepath, 'w', encoding='utf-8', newline='') as f:
-            # Write header
-            await f.write("id,prompt_response,timestamp,worker_id\n")
-            
-            # Write data
-            for r in results:
-                # Escape quotes in value
-                value = r.value.replace('"', '""')
-                row = f'"{r.key}","{value}","{r.timestamp.isoformat()}",{r.worker_id}\n'
-                await f.write(row)
-        
-        logger.info(f"Results exported to {filepath}")
-    
+
     @staticmethod
     async def to_markdown(results: List[Any], filepath: Path) -> None:
         """
@@ -269,8 +244,6 @@ class ResultExporter:
             # Write each result
             for i, r in enumerate(results, 1):
                 await f.write(f"## Result {i}: {r.key}\n\n")
-                await f.write(f"**Timestamp:** {r.timestamp.isoformat()}\n\n")
-                await f.write(f"**Worker:** {r.worker_id}\n\n")
                 await f.write(f"**Response:**\n\n")
                 await f.write(f"{r.value}\n\n")
                 await f.write("---\n\n")
@@ -443,11 +416,6 @@ async def load_prompts_from_text(filepath: str) -> List[Dict[str, str]]:
 async def export_results_json(results: List[Any], filepath: str) -> None:
     """Quick function to export results to JSON."""
     await ResultExporter.to_json(results, Path(filepath))
-
-
-async def export_results_csv(results: List[Any], filepath: str) -> None:
-    """Quick function to export results to CSV."""
-    await ResultExporter.to_csv(results, Path(filepath))
 
 
 async def export_results_markdown(results: List[Any], filepath: str) -> None:

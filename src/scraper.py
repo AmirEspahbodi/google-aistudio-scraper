@@ -184,46 +184,36 @@ class GoogleAIStudioScraper:
     async def submit_and_wait(self) -> None:
         """
         Click the "Run" button and wait for generation to complete.
-        Monitors UI state changes to detect completion.
+        Uses the appearance of the 'Good response' button (thumbs up) 
+        as the definitive signal that the stream has finished.
         """
         logger.debug(f"Worker {self.worker_id}: Submitting prompt")
         
-        # 1. Define Selectors
-        # We use XPath for the run button for consistency
+        # 1. Click Run
+        # Using the existing locator strategy
         run_button = self.page.locator("//button[@aria-label='Run']").first
-        
-        # KEY FIX: Use the specific XPath for the 'stoppable' class state
-        # This selector only matches when the button has the class 'stoppable'
-        stop_button_state = self.page.locator("//button[contains(@class, 'stoppable')]")
-
-        # 2. Click Run
         await self.interaction.safe_click(self.page, run_button)
         
-        # 3. Wait for generation to start (Stop state appears)
-        logger.debug(f"Worker {self.worker_id}: Waiting for generation to start")
-        
-        try:
-            # We wait for the 'stoppable' class to be added to the button
-            await stop_button_state.wait_for(state="visible", timeout=10000)
-            logger.debug(f"Worker {self.worker_id}: Generation started")
-        except Exception as e:
-            # If this fails, the click might not have registered, or generation was instant
-            logger.warning(f"Worker {self.worker_id}: Stop button did not appear. Error: {e}")
-            return # Optional: return early if start wasn't detected
-
-        # 4. Wait for generation to complete (Stop state disappears)
         logger.debug(f"Worker {self.worker_id}: Waiting for generation to complete")
         
         try:
-            # Playwright handles the polling internally with wait_for(state="hidden")
-            # This waits for the 'stoppable' class to be removed from the DOM
-            await stop_button_state.wait_for(state="hidden", timeout=120000) # 2 mins max
-            logger.debug(f"Worker {self.worker_id}: Generation completed (Stop hidden)")
-        except Exception:
-            logger.warning(f"Worker {self.worker_id}: Timeout waiting for completion")
+            # CRITICAL FIX BASED ON HTML ANALYSIS:
+            # Instead of waiting for a "Stop" button to hide (which can be flaky),
+            # we wait for the "Good response" button to become visible.
+            # This button is only present in the "completed" HTML state.
+            
+            # We target the last instance to ensure we are checking the current turn
+            completion_signal = self.page.locator("button[aria-label='Good response']").last
+            
+            # Increased timeout to 120s to allow for long generations
+            await completion_signal.wait_for(state="visible", timeout=120000)
+            
+            logger.debug(f"Worker {self.worker_id}: Generation completed (Feedback button detected)")
+            
+        except Exception as e:
+            logger.warning(f"Worker {self.worker_id}: Timeout or error waiting for completion signal: {e}")
 
-        # Additional buffer to ensure rendering is complete
-        await asyncio.sleep(2)
+        await asyncio.sleep(5)
     
     async def extract_response(self) -> Optional[str]:
         """

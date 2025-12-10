@@ -38,8 +38,6 @@ class ScraperResult(BaseModel):
     
     key: str = Field(description="Prompt identifier")
     value: str = Field(description="AI response text")
-    timestamp: datetime = Field(default_factory=datetime.now)
-    worker_id: Optional[int] = None
     
     model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
 
