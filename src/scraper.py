@@ -31,10 +31,10 @@ class GoogleAIStudioScraper:
         self.page.set_default_navigation_timeout(self.config.navigation_timeout)
 
         # Navigate to base URL
-        await self.page.goto(self.config.base_url, wait_until="domcontentloaded")
+        await self.page.goto(self.config.base_url[0], wait_until="domcontentloaded")
         await asyncio.sleep(2)  # Allow page to fully render
 
-        logger.info(f"Worker {self.worker_id}: Initialized at {self.config.base_url}")
+        logger.info(f"Worker {self.worker_id}: Initialized at {self.config.base_url[0]}")
 
     async def reset_chat_context(self) -> None:
         """

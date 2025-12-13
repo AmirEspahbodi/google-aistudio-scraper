@@ -34,8 +34,20 @@ class BrowserConfig(BaseModel):
 class ScraperConfig(BaseModel):
     """Scraper configuration and behavior settings."""
 
-    base_url: str = Field(
-        default="https://aistudio.google.com", description="Google AI Studio base URL"
+    base_url: list[str] = Field(
+        default=[
+            "https://aistudio.google.com/u/0/",
+            "https://aistudio.google.com/u/1/",
+            "https://aistudio.google.com/u/2/",
+            "https://aistudio.google.com/u/3/",
+            "https://aistudio.google.com/u/4/",
+            "https://aistudio.google.com/u/5/",
+            "https://aistudio.google.com/u/6/",
+            "https://aistudio.google.com/u/7/",
+            "https://aistudio.google.com/u/8/",
+            "https://aistudio.google.com/u/9/"
+            
+        ], description="Google AI Studio base URL"
     )
     model_name: str = Field(
         default="Gemini 3 Pro Preview",
