@@ -2,10 +2,17 @@
 Domain Models - Core business entities
 """
 
+from datetime import datetime
 from enum import Enum
 from typing import Optional
+
 from pydantic import BaseModel, Field
-from datetime import datetime
+
+
+class RateLimitDetected(Exception):
+    """Raised when Google AI Studio rate limit is reached."""
+
+    pass
 
 
 class PromptStatus(str, Enum):
